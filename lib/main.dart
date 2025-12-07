@@ -179,6 +179,9 @@ class FirebaseService {
   static CollectionReference get customersCollection =>
       _firestore.collection('customers');
 
+  static DocumentReference get settingsDocument =>
+      _firestore.collection('settings').doc('app_settings');
+
   static Future<String> addCustomer(String name, String phone) async {
     DocumentReference docRef = await customersCollection.add({
       'name': name,
@@ -237,6 +240,33 @@ class FirebaseService {
           TransactionModel.fromMap(doc.data()))
           .toList();
     });
+  }
+
+  // Settings related methods
+  static Future<void> updateRewardPercentage(double percentage) async {
+    await settingsDocument.set({
+      'rewardPercentage': percentage,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  static Stream<double> getRewardPercentageStream() {
+    return settingsDocument.snapshots().map((snapshot) {
+      if (snapshot.exists && snapshot.data() != null) {
+        final data = snapshot.data() as Map<String, dynamic>;
+        return (data['rewardPercentage'] ?? 10.0).toDouble();
+      }
+      return 10.0; // Default value
+    });
+  }
+
+  static Future<double> getRewardPercentage() async {
+    final snapshot = await settingsDocument.get();
+    if (snapshot.exists && snapshot.data() != null) {
+      final data = snapshot.data() as Map<String, dynamic>;
+      return (data['rewardPercentage'] ?? 10.0).toDouble();
+    }
+    return 10.0; // Default value
   }
 }
 
@@ -703,6 +733,20 @@ class CustomerListScreen extends StatefulWidget {
 class _CustomerListScreenState extends State<CustomerListScreen> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
+  double _currentRewardPercentage = 10.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRewardPercentage();
+  }
+
+  Future<void> _loadRewardPercentage() async {
+    final percentage = await FirebaseService.getRewardPercentage();
+    setState(() {
+      _currentRewardPercentage = percentage;
+    });
+  }
 
   Future<void> _addCustomer(String name, String phone) async {
     try {
@@ -760,24 +804,52 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                               ),
                             ],
                           ),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
+                          Row(
+                            children: [
+                              // Settings Icon
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.05),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            child: IconButton(
-                              onPressed: () => _showAddCustomerDialog(context),
-                              icon: const Icon(Icons.add,
-                                  color: Color(0xFF009688)),
-                            ),
-                          )
+                                child: IconButton(
+                                  onPressed: () => _showSettingsDialog(context),
+                                  icon: const Icon(Icons.settings,
+                                      color: Color(0xFF009688)),
+                                  tooltip: 'Settings',
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // Add Customer Icon
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.05),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: IconButton(
+                                  onPressed: () =>
+                                      _showAddCustomerDialog(context),
+                                  icon: const Icon(Icons.add,
+                                      color: Color(0xFF009688)),
+                                  tooltip: 'Add Customer',
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       );
                     },
@@ -1006,6 +1078,174 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showSettingsDialog(BuildContext context) {
+    final percentageController = TextEditingController(
+        text: _currentRewardPercentage.toStringAsFixed(1));
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        insetPadding: const EdgeInsets.all(16),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Padding(
+          padding: EdgeInsets.only(top: 8.0),
+          child: Text(
+            'Reward Settings',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F9FC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: Colors.grey.shade600, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Set the reward percentage customers earn on their purchases',
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              TextField(
+                controller: percentageController,
+                style: const TextStyle(fontSize: 18),
+                decoration: const InputDecoration(
+                  labelText: 'Reward Percentage',
+                  prefixIcon: Icon(Icons.percent),
+                  suffixText: '%',
+                  helperText: 'Enter value between 0 and 100',
+                  contentPadding:
+                  EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                ),
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F2F1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF009688)),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'Current Setting',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_currentRewardPercentage.toStringAsFixed(1)}%',
+                      style: const TextStyle(
+                        color: Color(0xFF009688),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text('Cancel',
+                      style: TextStyle(color: Colors.grey.shade700)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () async {
+                    final newPercentage =
+                        double.tryParse(percentageController.text) ?? 10.0;
+
+                    if (newPercentage < 0 || newPercentage > 100) {
+                      ToastService.show(
+                          context, 'Percentage must be between 0 and 100',
+                          isError: true);
+                      return;
+                    }
+
+                    Navigator.pop(ctx);
+
+                    try {
+                      await FirebaseService.updateRewardPercentage(
+                          newPercentage);
+
+                      setState(() {
+                        _currentRewardPercentage = newPercentage;
+                      });
+
+                      if (mounted) {
+                        ToastService.show(context,
+                            'Reward percentage updated to ${newPercentage.toStringAsFixed(1)}%');
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ToastService.show(context, 'Error updating: $e',
+                            isError: true);
+                      }
+                    }
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF009688),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Save',
+                      style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1305,11 +1545,21 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   double _finalPayable = 0.0;
   double _newReward = 0.0;
   bool _useDiscount = true; // Track if user wants to use discount
+  double _rewardPercentage = 10.0; // Default reward percentage
 
   @override
   void initState() {
     super.initState();
+    _loadRewardPercentage();
     _recalculateTotals();
+  }
+
+  Future<void> _loadRewardPercentage() async {
+    final percentage = await FirebaseService.getRewardPercentage();
+    setState(() {
+      _rewardPercentage = percentage;
+      _recalculateTotals();
+    });
   }
 
   void _addToCart() {
@@ -1325,6 +1575,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       _productNameController.clear();
       _qtyController.text = '1';
       _priceController.clear();
+      _useDiscount = true; // Reset discount preference
+      _discountToApply = 0.0; // Reset discount amount
       _recalculateTotals();
     });
   }
@@ -1332,6 +1584,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   void _removeFromCart(int index) {
     setState(() {
       _currentCart.removeAt(index);
+      _useDiscount = true; // Reset discount preference
+      _discountToApply = 0.0; // Reset discount amount
       _recalculateTotals();
     });
   }
@@ -1352,7 +1606,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     }
 
     _finalPayable = _billAmount - _discountToApply;
-    _newReward = _finalPayable * 0.10;
+    _newReward = _finalPayable * (_rewardPercentage / 100);
   }
 
   // Show confirmation dialog for discount usage
@@ -1420,6 +1674,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       setState(() {
         _currentCart.clear();
         _useDiscount = true; // Reset for next purchase
+        _discountToApply = 0.0; // Reset discount amount
         _recalculateTotals();
       });
 
