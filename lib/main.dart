@@ -3,20 +3,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'firebase_options.dart'; // adjust path if needed
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
-  // Debug: show which projectId the app is using (helps ensure you're looking at the right Firebase console)
-  try {
-    debugPrint('Using Firebase projectId: ${DefaultFirebaseOptions.currentPlatform.projectId}');
-  } catch (e) {
-    debugPrint('Could not read projectId: $e');
-  }
 
   runApp(const MyApp());
 }
@@ -60,7 +53,8 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFF009688), width: 1.5),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           labelStyle: TextStyle(color: Colors.grey.shade600, fontSize: 14),
         ),
       ),
@@ -84,7 +78,6 @@ class CartItem {
 
   double get total => quantity * price;
 
-  // Convert to Map for Firestore
   Map<String, dynamic> toMap() {
     return {
       'productName': productName,
@@ -93,7 +86,6 @@ class CartItem {
     };
   }
 
-  // Create from Firestore Map
   factory CartItem.fromMap(Map<String, dynamic> map) {
     return CartItem(
       productName: map['productName'] ?? '',
@@ -122,7 +114,6 @@ class TransactionModel {
     required this.date,
   });
 
-  // Convert to Map for Firestore
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -135,7 +126,6 @@ class TransactionModel {
     };
   }
 
-  // Create from Firestore Map
   factory TransactionModel.fromMap(Map<String, dynamic> map) {
     return TransactionModel(
       id: map['id'] ?? '',
@@ -169,17 +159,6 @@ class Customer {
     List<TransactionModel>? history,
   }) : history = history ?? [];
 
-  // Convert to Map for Firestore
-  Map<String, dynamic> toMap() {
-    return {
-      'name': name,
-      'phone': phone,
-      'walletBalance': walletBalance,
-      'createdAt': FieldValue.serverTimestamp(),
-    };
-  }
-
-  // Create from Firestore DocumentSnapshot
   factory Customer.fromFirestore(DocumentSnapshot doc) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return Customer(
@@ -197,45 +176,29 @@ class Customer {
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Customers Collection Reference
   static CollectionReference get customersCollection =>
       _firestore.collection('customers');
 
-  // Add Customer
   static Future<String> addCustomer(String name, String phone) async {
-    try {
-      DocumentReference docRef = await customersCollection.add({
-        'name': name,
-        'phone': phone,
-        'walletBalance': 0.0,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      debugPrint('Customer added, docId: ${docRef.id}');
-      return docRef.id;
-    } catch (e, st) {
-      debugPrint('Failed to add customer: $e\n$st');
-      throw Exception('Failed to add customer: $e');
-    }
+    DocumentReference docRef = await customersCollection.add({
+      'name': name,
+      'phone': phone,
+      'walletBalance': 0.0,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return docRef.id;
   }
 
-  // Update Customer (name and phone)
   static Future<void> updateCustomer(String customerId,
       {String? name, String? phone}) async {
-    try {
-      final Map<String, dynamic> data = {};
-      if (name != null) data['name'] = name;
-      if (phone != null) data['phone'] = phone;
-      if (data.isEmpty) return;
-      data['updatedAt'] = FieldValue.serverTimestamp();
-      await customersCollection.doc(customerId).update(data);
-      debugPrint('Customer $customerId updated: $data');
-    } catch (e, st) {
-      debugPrint('Failed to update customer: $e\n$st');
-      throw Exception('Failed to update customer: $e');
-    }
+    final Map<String, dynamic> data = {};
+    if (name != null) data['name'] = name;
+    if (phone != null) data['phone'] = phone;
+    if (data.isEmpty) return;
+    data['updatedAt'] = FieldValue.serverTimestamp();
+    await customersCollection.doc(customerId).update(data);
   }
 
-  // Get All Customers Stream
   static Stream<List<Customer>> getCustomersStream() {
     return customersCollection
         .orderBy('createdAt', descending: true)
@@ -245,33 +208,22 @@ class FirebaseService {
     });
   }
 
-  // Update Customer Wallet Balance
   static Future<void> updateWalletBalance(
       String customerId, double newBalance) async {
-    try {
-      await customersCollection.doc(customerId).update({
-        'walletBalance': newBalance,
-      });
-    } catch (e) {
-      throw Exception('Failed to update wallet: $e');
-    }
+    await customersCollection.doc(customerId).update({
+      'walletBalance': newBalance,
+    });
   }
 
-  // Add Transaction
   static Future<void> addTransaction(
       String customerId, TransactionModel transaction) async {
-    try {
-      await customersCollection
-          .doc(customerId)
-          .collection('transactions')
-          .doc(transaction.id)
-          .set(transaction.toMap());
-    } catch (e) {
-      throw Exception('Failed to add transaction: $e');
-    }
+    await customersCollection
+        .doc(customerId)
+        .collection('transactions')
+        .doc(transaction.id)
+        .set(transaction.toMap());
   }
 
-  // Get Transactions Stream for a Customer
   static Stream<List<TransactionModel>> getTransactionsStream(
       String customerId) {
     return customersCollection
@@ -281,9 +233,156 @@ class FirebaseService {
         .snapshots()
         .map((snapshot) {
       return snapshot.docs
-          .map((doc) => TransactionModel.fromMap(doc.data() as Map<String, dynamic>))
+          .map((doc) =>
+          TransactionModel.fromMap(doc.data() as Map<String, dynamic>))
           .toList();
     });
+  }
+}
+
+// --- TOAST SERVICE ---
+
+class ToastService {
+  static void show(BuildContext context, String message,
+      {bool isError = false}) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: _ToastWidget(
+            message: message,
+            isError: isError,
+            onDismiss: () {
+              if (overlayEntry.mounted) {
+                overlayEntry.remove();
+              }
+            },
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+  }
+}
+
+class _ToastWidget extends StatefulWidget {
+  final String message;
+  final bool isError;
+  final VoidCallback onDismiss;
+
+  const _ToastWidget({
+    required this.message,
+    required this.isError,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_ToastWidget> createState() => _ToastWidgetState();
+}
+
+class _ToastWidgetState extends State<_ToastWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacity;
+  late Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    ));
+
+    _slide = Tween<Offset>(begin: const Offset(0.2, 0.0), end: Offset.zero)
+        .animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    ));
+
+    _controller.forward();
+
+    // Auto dismiss after 3 seconds
+    Future.delayed(const Duration(seconds:5), () async {
+      if (mounted) {
+        await _controller.reverse();
+        widget.onDismiss();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: SlideTransition(
+        position: _slide,
+        child: Container(
+          width: 300,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            border: Border(
+              left: BorderSide(
+                color:
+                widget.isError ? Colors.redAccent : const Color(0xFF009688),
+                width: 4,
+              ),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                widget.isError
+                    ? Icons.error_outline
+                    : Icons.check_circle_outline,
+                color:
+                widget.isError ? Colors.redAccent : const Color(0xFF009688),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.message,
+                  style: const TextStyle(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -308,21 +407,11 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
         _searchController.clear();
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Customer added successfully'),
-            backgroundColor: Color(0xFF009688),
-          ),
-        );
+        ToastService.show(context, 'Customer added successfully');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ToastService.show(context, 'Error: $e', isError: true);
       }
     }
   }
@@ -333,7 +422,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header Section
+            // Header
             Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -359,11 +448,10 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                               ),
                               Text(
                                 "$customerCount Customers",
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.bold
-                                ),
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
@@ -404,7 +492,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     ),
                     child: TextField(
                       controller: _searchController,
-                      onChanged: (value) => setState(() => _searchQuery = value),
+                      onChanged: (value) =>
+                          setState(() => _searchQuery = value),
                       decoration: InputDecoration(
                         hintText: 'Search customers...',
                         hintStyle: TextStyle(
@@ -424,7 +513,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
               ),
             ),
 
-            // List Section with StreamBuilder
+            // List
             Expanded(
               child: StreamBuilder<List<Customer>>(
                 stream: FirebaseService.getCustomersStream(),
@@ -432,7 +521,6 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                   if (snapshot.hasError) {
                     return Center(child: Text('Error: ${snapshot.error}'));
                   }
-
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
@@ -509,9 +597,10 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             );
           },
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
             child: Row(
               children: [
+                // 1. Avatar
                 Hero(
                   tag: 'avatar_${customer.id}',
                   child: Container(
@@ -542,6 +631,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
+
+                // 2. Name and Phone
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -557,11 +648,14 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       const SizedBox(height: 4),
                       Text(
                         customer.phone,
-                        style: const TextStyle(color: Colors.black, fontSize: 13),
+                        style: const TextStyle(
+                            color: Colors.black54, fontSize: 13),
                       ),
                     ],
                   ),
                 ),
+
+                // 3. Balance Information
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -584,18 +678,20 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(width: 10),
-                // Edit button
+
+                // 4. Edit Button (Now in line)
+                const SizedBox(width: 8),
                 Container(
-                  width: 35,
-                  height: 35,
+                  width: 32,
+                  height: 32,
                   margin: const EdgeInsets.only(left: 8),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
+                    color: Colors.grey.shade50,
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
-                    icon: Icon(Icons.edit, size: 16, color: Colors.grey.shade600),
+                    icon: Icon(Icons.edit,
+                        size: 16, color: Colors.grey.shade600),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () => _showEditCustomerDialog(context, customer),
@@ -613,19 +709,20 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     final nameController = TextEditingController();
     final phoneController = TextEditingController();
 
-    if (_searchQuery.isNotEmpty) {
-      bool isNumeric = RegExp(r'^[0-9]+$').hasMatch(_searchQuery);
+    // Auto-fill logic
+    String currentSearch = _searchController.text.trim();
+    if (currentSearch.isNotEmpty) {
+      bool isNumeric = RegExp(r'^[0-9]+$').hasMatch(currentSearch);
       if (isNumeric) {
-        phoneController.text = _searchQuery;
+        phoneController.text = currentSearch;
       } else {
-        nameController.text = _searchQuery;
+        nameController.text = currentSearch;
       }
     }
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        // 1. Reduced insetPadding makes the dialog wider on the screen
         insetPadding: const EdgeInsets.all(16),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
@@ -639,11 +736,9 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
           ),
         ),
         content: SizedBox(
-          // 2. This forces the dialog to take maximum available width
           width: double.maxFinite,
           child: SingleChildScrollView(
             child: ConstrainedBox(
-              // 3. Set a minimum height to make it look taller/bigger
               constraints: const BoxConstraints(minHeight: 150),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -651,23 +746,25 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: nameController,
-                    style: const TextStyle(fontSize: 18), // Bigger text
+                    style: const TextStyle(fontSize: 18),
                     decoration: const InputDecoration(
                       labelText: 'Name',
                       prefixIcon: Icon(Icons.person_outline),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                      contentPadding:
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 18),
                     ),
                     textCapitalization: TextCapitalization.words,
                   ),
-                  const SizedBox(height: 24), // More space between fields
+                  const SizedBox(height: 24),
                   TextField(
                     controller: phoneController,
-                    style: const TextStyle(fontSize: 18), // Bigger text
+                    style: const TextStyle(fontSize: 18),
                     decoration: const InputDecoration(
                       labelText: 'Phone',
                       prefixIcon: Icon(Icons.phone_outlined),
                       counterText: "",
-                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                      contentPadding:
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 18),
                     ),
                     keyboardType: TextInputType.phone,
                     maxLength: 10,
@@ -692,7 +789,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+                  child: Text('Cancel',
+                      style: TextStyle(color: Colors.grey.shade700)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -702,16 +800,17 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     final name = nameController.text.trim();
                     final phone = phoneController.text.trim();
 
-                    if (name.isEmpty) return;
+                    if (name.isEmpty) {
+                      ToastService.show(context, 'Please enter a name',
+                          isError: true);
+                      return;
+                    }
 
-                    if (phone.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(phone)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Mobile number must be exactly 10 digits'),
-                          backgroundColor: Colors.red,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                    if (phone.length != 10 ||
+                        !RegExp(r'^[0-9]+$').hasMatch(phone)) {
+                      ToastService.show(
+                          context, 'Mobile number must be 10 digits',
+                          isError: true);
                       return;
                     }
 
@@ -726,7 +825,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     ),
                   ),
                   child: const Text('Save',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
               ),
             ],
@@ -743,7 +843,6 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        // 1. Matches the wide style of the Add dialog
         insetPadding: const EdgeInsets.all(16),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
@@ -757,11 +856,9 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
           ),
         ),
         content: SizedBox(
-          // 2. Max width
           width: double.maxFinite,
           child: SingleChildScrollView(
             child: ConstrainedBox(
-              // 3. Min height for better spacing
               constraints: const BoxConstraints(minHeight: 150),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -773,7 +870,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Name',
                       prefixIcon: Icon(Icons.person_outline),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                      contentPadding:
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 18),
                     ),
                     textCapitalization: TextCapitalization.words,
                   ),
@@ -785,7 +883,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       labelText: 'Phone',
                       prefixIcon: Icon(Icons.phone_outlined),
                       counterText: "",
-                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                      contentPadding:
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 18),
                     ),
                     keyboardType: TextInputType.phone,
                     maxLength: 10,
@@ -810,7 +909,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+                  child: Text('Cancel',
+                      style: TextStyle(color: Colors.grey.shade700)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -821,40 +921,38 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     final newPhone = phoneController.text.trim();
 
                     if (newName.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Name cannot be empty'), backgroundColor: Colors.red),
-                      );
+                      ToastService.show(context, 'Name cannot be empty',
+                          isError: true);
                       return;
                     }
 
-                    if (newPhone.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(newPhone)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Mobile number must be exactly 10 digits'), backgroundColor: Colors.red),
-                      );
+                    if (newPhone.length != 10 ||
+                        !RegExp(r'^[0-9]+$').hasMatch(newPhone)) {
+                      ToastService.show(
+                          context, 'Mobile number must be 10 digits',
+                          isError: true);
                       return;
                     }
 
-                    Navigator.pop(ctx); // Close dialog
+                    Navigator.pop(ctx);
 
                     try {
-                      await FirebaseService.updateCustomer(customer.id, name: newName, phone: newPhone);
+                      await FirebaseService.updateCustomer(customer.id,
+                          name: newName, phone: newPhone);
 
-                      // Update local copy
                       setState(() {
                         customer.name = newName;
                         customer.phone = newPhone;
                       });
 
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Customer updated'), backgroundColor: Color(0xFF009688)),
-                        );
+                        ToastService.show(
+                            context, 'Customer updated successfully');
                       }
                     } catch (e) {
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error updating: $e'), backgroundColor: Colors.red),
-                        );
+                        ToastService.show(context, 'Error updating: $e',
+                            isError: true);
                       }
                     }
                   },
@@ -866,7 +964,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     ),
                   ),
                   child: const Text('Save',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
               ),
             ],
@@ -915,7 +1014,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     if (name.isEmpty || price <= 0) return;
 
     setState(() {
-      _currentCart.add(CartItem(productName: name, quantity: qty, price: price));
+      _currentCart
+          .add(CartItem(productName: name, quantity: qty, price: price));
       _productNameController.clear();
       _qtyController.text = '1';
       _priceController.clear();
@@ -945,11 +1045,9 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     if (_billAmount <= 0) return;
 
     try {
-      // Calculate new balance
       final newBalance =
           widget.customer.walletBalance - _discountToApply + _newReward;
 
-      // Create transaction
       final transaction = TransactionModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         items: List.from(_currentCart),
@@ -960,11 +1058,9 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
         date: DateTime.now(),
       );
 
-      // Update Firebase
       await FirebaseService.updateWalletBalance(widget.customer.id, newBalance);
       await FirebaseService.addTransaction(widget.customer.id, transaction);
 
-      // Update local customer object
       widget.customer.walletBalance = newBalance;
 
       setState(() {
@@ -973,22 +1069,12 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'Purchase recorded. Added ₹${_newReward.toStringAsFixed(2)} to wallet.'),
-            backgroundColor: const Color(0xFF009688),
-          ),
-        );
+        ToastService.show(context,
+            'Purchase recorded. Added ₹${_newReward.toStringAsFixed(2)} to wallet.');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ToastService.show(context, 'Error: $e', isError: true);
       }
     }
   }
@@ -1009,7 +1095,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Wallet Card with Real-time Balance
+            // Wallet Card
             StreamBuilder<DocumentSnapshot>(
               stream: FirebaseService.customersCollection
                   .doc(widget.customer.id)
@@ -1072,7 +1158,9 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                           radius: 24,
                           backgroundColor: const Color(0xFFF2F5F8),
                           child: Text(
-                            widget.customer.name.isNotEmpty ? widget.customer.name[0] : '?',
+                            widget.customer.name.isNotEmpty
+                                ? widget.customer.name[0]
+                                : '?',
                             style: const TextStyle(
                                 color: Color(0xFF009688),
                                 fontWeight: FontWeight.bold),
@@ -1096,7 +1184,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Input Fields Container
+            // Input Fields
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -1118,7 +1206,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                         flex: 3,
                         child: TextField(
                           controller: _productNameController,
-                          decoration: const InputDecoration(labelText: 'Product'),
+                          decoration:
+                          const InputDecoration(labelText: 'Product'),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1163,7 +1252,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
               ),
             ),
 
-            // Cart Items List
+            // Cart Items
             if (_currentCart.isNotEmpty) ...[
               const SizedBox(height: 24),
               Container(
@@ -1222,7 +1311,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                       },
                     ),
 
-                    // Summary Section
+                    // Summary
                     Container(
                       padding: const EdgeInsets.all(24),
                       decoration: const BoxDecoration(
@@ -1294,10 +1383,9 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Transaction History with StreamBuilder
+            // History
             StreamBuilder<List<TransactionModel>>(
-              stream:
-              FirebaseService.getTransactionsStream(widget.customer.id),
+              stream: FirebaseService.getTransactionsStream(widget.customer.id),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Text('Error: ${snapshot.error}');
@@ -1364,13 +1452,14 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                                       mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text("${item.quantity}x ${item.productName}",
-                                            style:
-                                            const TextStyle(fontSize: 13)),
+                                        Text(
+                                            "${item.quantity}x ${item.productName}",
+                                            style: const TextStyle(
+                                                fontSize: 13)),
                                         Text(
                                             "₹${item.total.toStringAsFixed(2)}",
-                                            style:
-                                            const TextStyle(fontSize: 13)),
+                                            style: const TextStyle(
+                                                fontSize: 13)),
                                       ],
                                     ),
                                   )),
