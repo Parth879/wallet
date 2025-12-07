@@ -1,14 +1,23 @@
+// main.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:walletmanagement/firebase_options.dart';
+import 'firebase_options.dart'; // adjust path if needed
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Debug: show which projectId the app is using (helps ensure you're looking at the right Firebase console)
+  try {
+    debugPrint('Using Firebase projectId: ${DefaultFirebaseOptions.currentPlatform.projectId}');
+  } catch (e) {
+    debugPrint('Could not read projectId: $e');
+  }
+
   runApp(const MyApp());
 }
 
@@ -94,7 +103,7 @@ class CartItem {
   }
 }
 
-class Transaction {
+class TransactionModel {
   final String id;
   final List<CartItem> items;
   final double billAmount;
@@ -103,7 +112,7 @@ class Transaction {
   final double newRewardEarned;
   final DateTime date;
 
-  Transaction({
+  TransactionModel({
     required this.id,
     required this.items,
     required this.billAmount,
@@ -127,8 +136,8 @@ class Transaction {
   }
 
   // Create from Firestore Map
-  factory Transaction.fromMap(Map<String, dynamic> map) {
-    return Transaction(
+  factory TransactionModel.fromMap(Map<String, dynamic> map) {
+    return TransactionModel(
       id: map['id'] ?? '',
       items: (map['items'] as List<dynamic>?)
           ?.map((item) => CartItem.fromMap(item as Map<String, dynamic>))
@@ -138,7 +147,9 @@ class Transaction {
       discountApplied: (map['discountApplied'] ?? 0).toDouble(),
       finalPaid: (map['finalPaid'] ?? 0).toDouble(),
       newRewardEarned: (map['newRewardEarned'] ?? 0).toDouble(),
-      date: (map['date'] as Timestamp).toDate(),
+      date: (map['date'] is Timestamp)
+          ? (map['date'] as Timestamp).toDate()
+          : DateTime.now(),
     );
   }
 }
@@ -148,14 +159,14 @@ class Customer {
   String name;
   String phone;
   double walletBalance;
-  List<Transaction> history;
+  List<TransactionModel> history;
 
   Customer({
     required this.id,
     required this.name,
     required this.phone,
     this.walletBalance = 0.0,
-    List<Transaction>? history,
+    List<TransactionModel>? history,
   }) : history = history ?? [];
 
   // Convert to Map for Firestore
@@ -199,9 +210,28 @@ class FirebaseService {
         'walletBalance': 0.0,
         'createdAt': FieldValue.serverTimestamp(),
       });
+      debugPrint('Customer added, docId: ${docRef.id}');
       return docRef.id;
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('Failed to add customer: $e\n$st');
       throw Exception('Failed to add customer: $e');
+    }
+  }
+
+  // Update Customer (name and phone)
+  static Future<void> updateCustomer(String customerId,
+      {String? name, String? phone}) async {
+    try {
+      final Map<String, dynamic> data = {};
+      if (name != null) data['name'] = name;
+      if (phone != null) data['phone'] = phone;
+      if (data.isEmpty) return;
+      data['updatedAt'] = FieldValue.serverTimestamp();
+      await customersCollection.doc(customerId).update(data);
+      debugPrint('Customer $customerId updated: $data');
+    } catch (e, st) {
+      debugPrint('Failed to update customer: $e\n$st');
+      throw Exception('Failed to update customer: $e');
     }
   }
 
@@ -229,7 +259,7 @@ class FirebaseService {
 
   // Add Transaction
   static Future<void> addTransaction(
-      String customerId, Transaction transaction) async {
+      String customerId, TransactionModel transaction) async {
     try {
       await customersCollection
           .doc(customerId)
@@ -242,7 +272,8 @@ class FirebaseService {
   }
 
   // Get Transactions Stream for a Customer
-  static Stream<List<Transaction>> getTransactionsStream(String customerId) {
+  static Stream<List<TransactionModel>> getTransactionsStream(
+      String customerId) {
     return customersCollection
         .doc(customerId)
         .collection('transactions')
@@ -250,7 +281,7 @@ class FirebaseService {
         .snapshots()
         .map((snapshot) {
       return snapshot.docs
-          .map((doc) => Transaction.fromMap(doc.data()))
+          .map((doc) => TransactionModel.fromMap(doc.data() as Map<String, dynamic>))
           .toList();
     });
   }
@@ -330,7 +361,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                                 "$customerCount Customers",
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: Colors.blueGrey.shade400,
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold
                                 ),
                               ),
                             ],
@@ -376,7 +408,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       decoration: InputDecoration(
                         hintText: 'Search customers...',
                         hintStyle: TextStyle(
-                            color: Colors.grey.shade400, fontSize: 14),
+                            color: Colors.grey.shade600, fontSize: 14),
                         prefixIcon: Icon(Icons.search,
                             color: Colors.grey.shade400, size: 22),
                         border: InputBorder.none,
@@ -547,10 +579,27 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF009688),
-                        fontSize: 15,
+                        fontSize: 16,
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(width: 10),
+                // Edit button
+                Container(
+                  width: 35,
+                  height: 35,
+                  margin: const EdgeInsets.only(left: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: Icon(Icons.edit, size: 16, color: Colors.grey.shade600),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _showEditCustomerDialog(context, customer),
+                  ),
                 ),
               ],
             ),
@@ -576,64 +625,251 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        insetPadding:
-        const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+        // 1. Reduced insetPadding makes the dialog wider on the screen
+        insetPadding: const EdgeInsets.all(16),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Add New Customer',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'Phone',
-                counterText: "",
-              ),
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+        title: const Padding(
+          padding: EdgeInsets.only(top: 8.0),
+          child: Text(
+            'Add New Customer',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
           ),
-          TextButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              final phone = phoneController.text.trim();
-
-              if (name.isEmpty) return;
-
-              if (phone.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(phone)) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Mobile number must be exactly 10 digits'),
-                    backgroundColor: Colors.red,
-                    behavior: SnackBarBehavior.floating,
+        ),
+        content: SizedBox(
+          // 2. This forces the dialog to take maximum available width
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: ConstrainedBox(
+              // 3. Set a minimum height to make it look taller/bigger
+              constraints: const BoxConstraints(minHeight: 150),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameController,
+                    style: const TextStyle(fontSize: 18), // Bigger text
+                    decoration: const InputDecoration(
+                      labelText: 'Name',
+                      prefixIcon: Icon(Icons.person_outline),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                    ),
+                    textCapitalization: TextCapitalization.words,
                   ),
-                );
-                return;
-              }
+                  const SizedBox(height: 24), // More space between fields
+                  TextField(
+                    controller: phoneController,
+                    style: const TextStyle(fontSize: 18), // Bigger text
+                    decoration: const InputDecoration(
+                      labelText: 'Phone',
+                      prefixIcon: Icon(Icons.phone_outlined),
+                      counterText: "",
+                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                    ),
+                    keyboardType: TextInputType.phone,
+                    maxLength: 10,
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    final phone = phoneController.text.trim();
 
-              _addCustomer(name, phone);
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save Customer',
-                style: TextStyle(
-                    color: Color(0xFF009688), fontWeight: FontWeight.bold)),
+                    if (name.isEmpty) return;
+
+                    if (phone.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(phone)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Mobile number must be exactly 10 digits'),
+                          backgroundColor: Colors.red,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      return;
+                    }
+
+                    _addCustomer(name, phone);
+                    Navigator.pop(ctx);
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF009688),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Save',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditCustomerDialog(BuildContext context, Customer customer) {
+    final nameController = TextEditingController(text: customer.name);
+    final phoneController = TextEditingController(text: customer.phone);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        // 1. Matches the wide style of the Add dialog
+        insetPadding: const EdgeInsets.all(16),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Padding(
+          padding: EdgeInsets.only(top: 8.0),
+          child: Text(
+            'Edit Customer',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        content: SizedBox(
+          // 2. Max width
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: ConstrainedBox(
+              // 3. Min height for better spacing
+              constraints: const BoxConstraints(minHeight: 150),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameController,
+                    style: const TextStyle(fontSize: 18),
+                    decoration: const InputDecoration(
+                      labelText: 'Name',
+                      prefixIcon: Icon(Icons.person_outline),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: phoneController,
+                    style: const TextStyle(fontSize: 18),
+                    decoration: const InputDecoration(
+                      labelText: 'Phone',
+                      prefixIcon: Icon(Icons.phone_outlined),
+                      counterText: "",
+                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                    ),
+                    keyboardType: TextInputType.phone,
+                    maxLength: 10,
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () async {
+                    final newName = nameController.text.trim();
+                    final newPhone = phoneController.text.trim();
+
+                    if (newName.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Name cannot be empty'), backgroundColor: Colors.red),
+                      );
+                      return;
+                    }
+
+                    if (newPhone.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(newPhone)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Mobile number must be exactly 10 digits'), backgroundColor: Colors.red),
+                      );
+                      return;
+                    }
+
+                    Navigator.pop(ctx); // Close dialog
+
+                    try {
+                      await FirebaseService.updateCustomer(customer.id, name: newName, phone: newPhone);
+
+                      // Update local copy
+                      setState(() {
+                        customer.name = newName;
+                        customer.phone = newPhone;
+                      });
+
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Customer updated'), backgroundColor: Color(0xFF009688)),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error updating: $e'), backgroundColor: Colors.red),
+                        );
+                      }
+                    }
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF009688),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Save',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -679,8 +915,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     if (name.isEmpty || price <= 0) return;
 
     setState(() {
-      _currentCart.add(
-          CartItem(productName: name, quantity: qty, price: price));
+      _currentCart.add(CartItem(productName: name, quantity: qty, price: price));
       _productNameController.clear();
       _qtyController.text = '1';
       _priceController.clear();
@@ -715,7 +950,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           widget.customer.walletBalance - _discountToApply + _newReward;
 
       // Create transaction
-      final transaction = Transaction(
+      final transaction = TransactionModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         items: List.from(_currentCart),
         billAmount: _billAmount,
@@ -837,7 +1072,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                           radius: 24,
                           backgroundColor: const Color(0xFFF2F5F8),
                           child: Text(
-                            widget.customer.name[0],
+                            widget.customer.name.isNotEmpty ? widget.customer.name[0] : '?',
                             style: const TextStyle(
                                 color: Color(0xFF009688),
                                 fontWeight: FontWeight.bold),
@@ -883,8 +1118,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                         flex: 3,
                         child: TextField(
                           controller: _productNameController,
-                          decoration:
-                          const InputDecoration(labelText: 'Product'),
+                          decoration: const InputDecoration(labelText: 'Product'),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1061,7 +1295,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             const SizedBox(height: 16),
 
             // Transaction History with StreamBuilder
-            StreamBuilder<List<Transaction>>(
+            StreamBuilder<List<TransactionModel>>(
               stream:
               FirebaseService.getTransactionsStream(widget.customer.id),
               builder: (context, snapshot) {
@@ -1130,14 +1364,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                                       mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text(
-                                            "${item.quantity}x ${item.productName}",
-                                            style: const TextStyle(
-                                                fontSize: 13)),
+                                        Text("${item.quantity}x ${item.productName}",
+                                            style:
+                                            const TextStyle(fontSize: 13)),
                                         Text(
                                             "₹${item.total.toStringAsFixed(2)}",
-                                            style: const TextStyle(
-                                                fontSize: 13)),
+                                            style:
+                                            const TextStyle(fontSize: 13)),
                                       ],
                                     ),
                                   )),
