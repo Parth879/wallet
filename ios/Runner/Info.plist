@@ -48,6 +48,10 @@
 		<key>UIStatusBarHidden</key>
 		<true/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>
+		<key>NSCameraUsageDescription</key>
+		<string>Camera is required to scan QR codes</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Need to save QR codes</string>
 		<false/>
 	</dict>
 </plist>
