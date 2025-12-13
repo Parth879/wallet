@@ -179,6 +179,9 @@ class FirebaseService {
   static CollectionReference get customersCollection =>
       _firestore.collection('customers');
 
+  static DocumentReference get settingsDocument =>
+      _firestore.collection('settings').doc('app_settings');
+
   static Future<String> addCustomer(String name, String phone) async {
     DocumentReference docRef = await customersCollection.add({
       'name': name,
@@ -234,9 +237,36 @@ class FirebaseService {
         .map((snapshot) {
       return snapshot.docs
           .map((doc) =>
-          TransactionModel.fromMap(doc.data() as Map<String, dynamic>))
+          TransactionModel.fromMap(doc.data()))
           .toList();
     });
+  }
+
+  // Settings related methods
+  static Future<void> updateRewardPercentage(double percentage) async {
+    await settingsDocument.set({
+      'rewardPercentage': percentage,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  static Stream<double> getRewardPercentageStream() {
+    return settingsDocument.snapshots().map((snapshot) {
+      if (snapshot.exists && snapshot.data() != null) {
+        final data = snapshot.data() as Map<String, dynamic>;
+        return (data['rewardPercentage'] ?? 10.0).toDouble();
+      }
+      return 10.0; // Default value
+    });
+  }
+
+  static Future<double> getRewardPercentage() async {
+    final snapshot = await settingsDocument.get();
+    if (snapshot.exists && snapshot.data() != null) {
+      final data = snapshot.data() as Map<String, dynamic>;
+      return (data['rewardPercentage'] ?? 10.0).toDouble();
+    }
+    return 10.0; // Default value
   }
 }
 
@@ -313,7 +343,7 @@ class _ToastWidgetState extends State<_ToastWidget>
 
     _controller.forward();
 
-    // Auto dismiss after 3 seconds
+    // Auto dismiss after 5 seconds
     Future.delayed(const Duration(seconds:5), () async {
       if (mounted) {
         await _controller.reverse();
@@ -386,6 +416,311 @@ class _ToastWidgetState extends State<_ToastWidget>
   }
 }
 
+// Discount Selection Dialog Widget
+class _DiscountSelectionDialog extends StatefulWidget {
+  final double billAmount;
+  final double availableBalance;
+  final double maxDiscount;
+
+  const _DiscountSelectionDialog({
+    required this.billAmount,
+    required this.availableBalance,
+    required this.maxDiscount,
+  });
+
+  @override
+  State<_DiscountSelectionDialog> createState() =>
+      _DiscountSelectionDialogState();
+}
+
+class _DiscountSelectionDialogState extends State<_DiscountSelectionDialog> {
+  int _selectedOption = 1; // 1: Full discount, 2: Custom, 3: No discount
+  final TextEditingController _customAmountController = TextEditingController();
+  double _customAmount = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _customAmountController.text = widget.maxDiscount.toStringAsFixed(2);
+    _customAmount = widget.maxDiscount;
+  }
+
+  @override
+  void dispose() {
+    _customAmountController.dispose();
+    super.dispose();
+  }
+
+  void _updateCustomAmount(String value) {
+    final amount = double.tryParse(value) ?? 0.0;
+    setState(() {
+      if (amount > widget.maxDiscount) {
+        _customAmount = widget.maxDiscount;
+        _customAmountController.text = widget.maxDiscount.toStringAsFixed(2);
+        _customAmountController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _customAmountController.text.length),
+        );
+      } else if (amount < 0) {
+        _customAmount = 0.0;
+        _customAmountController.text = '0.00';
+      } else {
+        _customAmount = amount;
+      }
+    });
+  }
+
+  void _handleConfirm() {
+    if (_selectedOption == 1) {
+      // Use full discount
+      Navigator.pop(context, {
+        'useDiscount': true,
+        'customAmount': widget.maxDiscount,
+      });
+    } else if (_selectedOption == 2) {
+      // Use custom amount
+      if (_customAmount <= 0) {
+        ToastService.show(
+            context, 'Please enter a valid amount', isError: true);
+        return;
+      }
+      Navigator.pop(context, {
+        'useDiscount': true,
+        'customAmount': _customAmount,
+      });
+    } else {
+      // No discount
+      Navigator.pop(context, {
+        'useDiscount': false,
+        'customAmount': 0.0,
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      insetPadding: const EdgeInsets.all(16),
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: const Padding(
+        padding: EdgeInsets.only(top: 8.0),
+        child: Text(
+          'Use Wallet Balance?',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Bill Summary
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F9FC),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Bill Amount:',
+                            style: TextStyle(fontSize: 15)),
+                        Text('₹${widget.billAmount.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Available Balance:',
+                            style: TextStyle(fontSize: 15)),
+                        Text('₹${widget.availableBalance.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF009688))),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Option 1: Use Full Discount
+              _buildOptionTile(
+                value: 1,
+                title: 'Use Full Discount',
+                subtitle: '₹${widget.maxDiscount.toStringAsFixed(2)}',
+              ),
+              const SizedBox(height: 12),
+
+              // Option 2: Custom Amount
+              _buildOptionTile(
+                value: 2,
+                title: 'Custom Amount',
+                subtitle: 'Enter amount to use',
+                child: _selectedOption == 2
+                    ? Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: TextField(
+                    controller: _customAmountController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'Amount',
+                      prefixText: '₹',
+                      hintText: '0.00',
+                      helperText:
+                      'Max: ₹${widget.maxDiscount.toStringAsFixed(2)}',
+                      helperStyle: TextStyle(
+                          color: Colors.grey.shade500, fontSize: 12),
+                    ),
+                    onChanged: _updateCustomAmount,
+                  ),
+                )
+                    : null,
+              ),
+              const SizedBox(height: 12),
+
+              // Option 3: No Discount
+              _buildOptionTile(
+                value: 3,
+                title: 'Pay Full Amount',
+                subtitle: 'Don\'t use wallet balance',
+              ),
+            ],
+          ),
+        ),
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      actions: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  side: BorderSide(color: Colors.grey.shade300),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text('Cancel',
+                    style: TextStyle(color: Colors.grey.shade700)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton(
+                onPressed: _handleConfirm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF009688),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Confirm',
+                    style:
+                    TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOptionTile({
+    required int value,
+    required String title,
+    required String subtitle,
+    Widget? child,
+  }) {
+    final isSelected = _selectedOption == value;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedOption = value),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFE0F2F1) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF009688) : Colors.grey.shade300,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isSelected
+                          ? const Color(0xFF009688)
+                          : Colors.grey.shade400,
+                      width: 2,
+                    ),
+                    color: isSelected ? const Color(0xFF009688) : Colors.white,
+                  ),
+                  child: isSelected
+                      ? const Center(
+                    child: Icon(Icons.check,
+                        size: 14, color: Colors.white),
+                  )
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.normal,
+                          color: isSelected
+                              ? const Color(0xFF009688)
+                              : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (child != null) child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // --- SCREENS ---
 
 class CustomerListScreen extends StatefulWidget {
@@ -398,6 +733,20 @@ class CustomerListScreen extends StatefulWidget {
 class _CustomerListScreenState extends State<CustomerListScreen> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
+  double _currentRewardPercentage = 10.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRewardPercentage();
+  }
+
+  Future<void> _loadRewardPercentage() async {
+    final percentage = await FirebaseService.getRewardPercentage();
+    setState(() {
+      _currentRewardPercentage = percentage;
+    });
+  }
 
   Future<void> _addCustomer(String name, String phone) async {
     try {
@@ -455,24 +804,52 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                               ),
                             ],
                           ),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
+                          Row(
+                            children: [
+                              // Settings Icon
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.05),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            child: IconButton(
-                              onPressed: () => _showAddCustomerDialog(context),
-                              icon: const Icon(Icons.add,
-                                  color: Color(0xFF009688)),
-                            ),
-                          )
+                                child: IconButton(
+                                  onPressed: () => _showSettingsDialog(context),
+                                  icon: const Icon(Icons.settings,
+                                      color: Color(0xFF009688)),
+                                  tooltip: 'Settings',
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // Add Customer Icon
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.05),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: IconButton(
+                                  onPressed: () =>
+                                      _showAddCustomerDialog(context),
+                                  icon: const Icon(Icons.add,
+                                      color: Color(0xFF009688)),
+                                  tooltip: 'Add Customer',
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       );
                     },
@@ -701,6 +1078,174 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showSettingsDialog(BuildContext context) {
+    final percentageController = TextEditingController(
+        text: _currentRewardPercentage.toStringAsFixed(1));
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        insetPadding: const EdgeInsets.all(16),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Padding(
+          padding: EdgeInsets.only(top: 8.0),
+          child: Text(
+            'Reward Settings',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F9FC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: Colors.grey.shade600, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Set the reward percentage customers earn on their purchases',
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              TextField(
+                controller: percentageController,
+                style: const TextStyle(fontSize: 18),
+                decoration: const InputDecoration(
+                  labelText: 'Reward Percentage',
+                  prefixIcon: Icon(Icons.percent),
+                  suffixText: '%',
+                  helperText: 'Enter value between 0 and 100',
+                  contentPadding:
+                  EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                ),
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F2F1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF009688)),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'Current Setting',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_currentRewardPercentage.toStringAsFixed(1)}%',
+                      style: const TextStyle(
+                        color: Color(0xFF009688),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text('Cancel',
+                      style: TextStyle(color: Colors.grey.shade700)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () async {
+                    final newPercentage =
+                        double.tryParse(percentageController.text) ?? 10.0;
+
+                    if (newPercentage < 0 || newPercentage > 100) {
+                      ToastService.show(
+                          context, 'Percentage must be between 0 and 100',
+                          isError: true);
+                      return;
+                    }
+
+                    Navigator.pop(ctx);
+
+                    try {
+                      await FirebaseService.updateRewardPercentage(
+                          newPercentage);
+
+                      setState(() {
+                        _currentRewardPercentage = newPercentage;
+                      });
+
+                      if (mounted) {
+                        ToastService.show(context,
+                            'Reward percentage updated to ${newPercentage.toStringAsFixed(1)}%');
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ToastService.show(context, 'Error updating: $e',
+                            isError: true);
+                      }
+                    }
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF009688),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Save',
+                      style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -999,11 +1544,22 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   double _discountToApply = 0.0;
   double _finalPayable = 0.0;
   double _newReward = 0.0;
+  bool _useDiscount = true; // Track if user wants to use discount
+  double _rewardPercentage = 10.0; // Default reward percentage
 
   @override
   void initState() {
     super.initState();
+    _loadRewardPercentage();
     _recalculateTotals();
+  }
+
+  Future<void> _loadRewardPercentage() async {
+    final percentage = await FirebaseService.getRewardPercentage();
+    setState(() {
+      _rewardPercentage = percentage;
+      _recalculateTotals();
+    });
   }
 
   void _addToCart() {
@@ -1019,6 +1575,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       _productNameController.clear();
       _qtyController.text = '1';
       _priceController.clear();
+      _useDiscount = true; // Reset discount preference
+      _discountToApply = 0.0; // Reset discount amount
       _recalculateTotals();
     });
   }
@@ -1026,19 +1584,69 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   void _removeFromCart(int index) {
     setState(() {
       _currentCart.removeAt(index);
+      _useDiscount = true; // Reset discount preference
+      _discountToApply = 0.0; // Reset discount amount
       _recalculateTotals();
     });
   }
 
   void _recalculateTotals() {
     _billAmount = _currentCart.fold(0.0, (sum, item) => sum + item.total);
-    if (widget.customer.walletBalance >= _billAmount) {
-      _discountToApply = _billAmount;
-    } else {
-      _discountToApply = widget.customer.walletBalance;
+
+    // Apply discount only if user wants to use it
+    // Note: _discountToApply might be set by custom amount in dialog
+    if (_useDiscount && _discountToApply == 0.0) {
+      if (widget.customer.walletBalance >= _billAmount) {
+        _discountToApply = _billAmount;
+      } else {
+        _discountToApply = widget.customer.walletBalance;
+      }
+    } else if (!_useDiscount) {
+      _discountToApply = 0.0;
     }
+
     _finalPayable = _billAmount - _discountToApply;
-    _newReward = _finalPayable * 0.10;
+    _newReward = _finalPayable * (_rewardPercentage / 100);
+  }
+
+  // Show confirmation dialog for discount usage
+  Future<void> _showDiscountConfirmationDialog() async {
+    if (_billAmount <= 0) return;
+
+    // Calculate maximum possible discount
+    final maxDiscount = widget.customer.walletBalance >= _billAmount
+        ? _billAmount
+        : widget.customer.walletBalance;
+
+    if (maxDiscount <= 0) {
+      // No wallet balance, proceed directly
+      setState(() {
+        _useDiscount = false;
+        _recalculateTotals();
+      });
+      await _processTransaction();
+      return;
+    }
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => _DiscountSelectionDialog(
+        billAmount: _billAmount,
+        availableBalance: widget.customer.walletBalance,
+        maxDiscount: maxDiscount,
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _useDiscount = result['useDiscount'] ?? false;
+        if (_useDiscount && result['customAmount'] != null) {
+          _discountToApply = result['customAmount'];
+        }
+        _recalculateTotals();
+      });
+      await _processTransaction();
+    }
   }
 
   Future<void> _processTransaction() async {
@@ -1065,6 +1673,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
 
       setState(() {
         _currentCart.clear();
+        _useDiscount = true; // Reset for next purchase
+        _discountToApply = 0.0; // Reset discount amount
         _recalculateTotals();
       });
 
@@ -1348,7 +1958,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
-                              onPressed: _processTransaction,
+                              onPressed: _showDiscountConfirmationDialog,
                               style: FilledButton.styleFrom(
                                 backgroundColor: const Color(0xFF009688),
                                 padding:
@@ -1358,7 +1968,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                                 elevation: 0,
                               ),
                               child: Text(
-                                "Confirm & Save (+₹${_newReward.toStringAsFixed(2)})",
+                                "Confirm Purchase (+₹${_newReward.toStringAsFixed(2)} reward)",
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold, fontSize: 16),
                               ),
